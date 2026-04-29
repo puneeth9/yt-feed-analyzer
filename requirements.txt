@@ -1,0 +1,8 @@
+playwright
+playwright-stealth
+langgraph
+langchain-anthropic
+anthropic
+typer
+rich
+python-dotenv
