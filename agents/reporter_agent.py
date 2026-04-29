@@ -21,7 +21,7 @@ def _quartile_label(index: int, total: int) -> str:
 
 def run_reporter_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     """Aggregate categorized Shorts and generate a markdown report."""
-    print("[reporter] Starting reporter agent...")
+    console.rule("[bold blue]Generating Report")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -29,7 +29,7 @@ def run_reporter_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     total = len(shorts)
 
     if total == 0:
-        print("[reporter] No categorized Shorts to report on.")
+        console.print("[yellow]No categorized Shorts to report on.[/yellow]")
         return {**state, "status": "done", "current_agent": "reporter"}
 
     # ── 1. Category breakdown ────────────────────────────────────────────────
@@ -165,7 +165,7 @@ def run_reporter_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
 
     report_content = "\n".join(lines) + "\n"
     report_path.write_text(report_content)
-    print(f"[reporter] Report saved to {report_path}")
+    console.print(f"[green]✓[/green] Report saved → [dim]{report_path}[/dim]")
 
     # ── Rich CLI summary ─────────────────────────────────────────────────────
     console.rule("[bold cyan]YouTube Shorts Feed Analysis")

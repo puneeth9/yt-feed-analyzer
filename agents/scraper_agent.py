@@ -5,12 +5,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from orchestrator.state import FeedAnalyzerState
 
 SESSION_PATH = Path("data/session.json")
 USER_DATA_DIR = Path("data/chrome_profile")
 CHECKPOINT_DIR = Path("data/checkpoints")
+
+console = Console()
 
 
 def _scrape_current_short(page) -> dict:
@@ -59,7 +70,7 @@ def _scrape_current_short(page) -> dict:
     # Suggested by YouTube label (passive check only)
     is_suggested = False
     suggested_els = page.query_selector_all("*")
-    for el in suggested_els[:200]:  # limit scan
+    for el in suggested_els[:200]:
         try:
             txt = el.inner_text()
             if "Suggested by YouTube" in txt or "suggested by youtube" in txt.lower():
@@ -94,7 +105,7 @@ def _scrape_current_short(page) -> dict:
 
 def run_scraper_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     """Scroll through YouTube Shorts and collect raw metadata."""
-    print("[scraper] Starting scraper agent...")
+    console.rule("[bold blue]Stage 2 of 4 — Scraping")
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     target_count = state.get("target_count", 100)
@@ -112,59 +123,62 @@ def run_scraper_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
             )
             page = context.new_page()
 
-            print("[scraper] Navigating to YouTube Shorts...")
+            console.print("[dim]Navigating to YouTube Shorts...[/dim]")
             page.goto("https://www.youtube.com/shorts", wait_until="networkidle")
             time.sleep(2)
 
-            for i in range(target_count):
-                position = checkpoint + i
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan]Scraping[/bold cyan]"),
+                BarColumn(bar_width=40),
+                MofNCompleteColumn(),
+                TextColumn("•"),
+                TimeRemainingColumn(),
+                TextColumn("• [dim]{task.fields[title]}[/dim]"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("scraping", total=target_count, title="")
 
-                # Randomized wait: 80% slow, 20% fast
-                if random.random() < 0.80:
-                    wait_time = random.uniform(1.5, 2.5)
-                else:
-                    wait_time = random.uniform(0.8, 1.2)
-                time.sleep(wait_time)
+                for i in range(target_count):
+                    position = checkpoint + i
 
-                try:
-                    short_data = _scrape_current_short(page)
-                except Exception as exc:
-                    print(f"[scraper] DOM scrape error at position {position}: {exc}")
-                    short_data = {
-                        "title": "",
-                        "channel": "",
-                        "hashtags": [],
-                        "audio_track": "",
-                        "view_count": "",
-                        "is_suggested": False,
-                        "description_raw": "",
-                    }
+                    if random.random() < 0.80:
+                        wait_time = random.uniform(1.5, 2.5)
+                    else:
+                        wait_time = random.uniform(0.8, 1.2)
+                    time.sleep(wait_time)
 
-                short_data["position"] = position
-                short_data["timestamp"] = datetime.now(timezone.utc).isoformat()
-                raw_shorts.append(short_data)
+                    try:
+                        short_data = _scrape_current_short(page)
+                    except Exception as exc:
+                        progress.console.log(f"[red]DOM scrape error at position {position}:[/red] {exc}")
+                        short_data = {
+                            "title": "", "channel": "", "hashtags": [],
+                            "audio_track": "", "view_count": "",
+                            "is_suggested": False, "description_raw": "",
+                        }
 
-                print(
-                    f"[scraper] [{position + 1}/{target_count}] "
-                    f"title={short_data['title'][:40]!r} "
-                    f"channel={short_data['channel']!r}"
-                )
+                    short_data["position"] = position
+                    short_data["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    raw_shorts.append(short_data)
 
-                # Checkpoint every 10 shorts
-                if (i + 1) % 10 == 0:
-                    cp_index = (position + 1) // 10
-                    cp_path = CHECKPOINT_DIR / f"checkpoint_{cp_index}.json"
-                    cp_path.write_text(json.dumps(raw_shorts, indent=2))
-                    print(f"[scraper] Checkpoint saved: {cp_path}")
+                    title_preview = (short_data["title"][:45] + "…") if len(short_data["title"]) > 45 else short_data["title"] or "(no title)"
+                    progress.update(task, advance=1, title=title_preview)
 
-                # Scroll to next Short
-                page.keyboard.press("ArrowDown")
+                    # Checkpoint every 10 shorts
+                    if (i + 1) % 10 == 0:
+                        cp_index = (position + 1) // 10
+                        cp_path = CHECKPOINT_DIR / f"checkpoint_{cp_index}.json"
+                        cp_path.write_text(json.dumps(raw_shorts, indent=2))
+                        progress.console.log(f"[dim]Checkpoint saved → {cp_path}[/dim]")
+
+                    page.keyboard.press("ArrowDown")
 
             context.close()
 
     except Exception as exc:
         error_msg = f"Scraper failed at position {len(raw_shorts)}: {exc}"
-        print(f"[scraper] FATAL: {error_msg}")
+        console.print(f"[bold red]FATAL:[/bold red] {error_msg}")
         return {
             **state,
             "raw_shorts": raw_shorts,
@@ -173,7 +187,7 @@ def run_scraper_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
             "error": error_msg,
         }
 
-    print(f"[scraper] Done. Collected {len(raw_shorts)} Shorts.")
+    console.print(f"[green]✓[/green] Scraped [bold]{len(raw_shorts)}[/bold] Shorts.")
     return {
         **state,
         "raw_shorts": raw_shorts,

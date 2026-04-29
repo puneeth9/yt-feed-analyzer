@@ -4,6 +4,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import anthropic
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
 from orchestrator.state import FeedAnalyzerState, CategorizerPrivateState
 
@@ -22,15 +31,15 @@ CATEGORIZER_PROMPT = (
     "description={description_clean}"
 )
 
+console = Console()
+
 
 def _parse_category_response(text: str) -> dict:
     """Extract JSON from Claude response, tolerating markdown fences."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
-        # strip opening fence
         lines = lines[1:]
-        # strip closing fence
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
@@ -39,7 +48,7 @@ def _parse_category_response(text: str) -> dict:
 
 def run_categorizer_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     """Categorize each cleaned Short using Claude."""
-    print("[categorizer] Starting categorizer agent...")
+    console.rule("[bold blue]Stage 4 of 4 — Categorizing")
 
     CATEGORIZED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -53,61 +62,72 @@ def run_categorizer_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
 
     categorized_shorts = []
 
-    for i, short in enumerate(cleaned_shorts):
-        prompt = CATEGORIZER_PROMPT.format(
-            title=short.get("title", ""),
-            channel=short.get("channel", ""),
-            hashtags=short.get("hashtags", []),
-            audio_track=short.get("audio_track", ""),
-            description_clean=short.get("description_clean", ""),
-        )
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold yellow]Categorizing[/bold yellow]"),
+        BarColumn(bar_width=40),
+        MofNCompleteColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        TextColumn("• [dim]{task.fields[tokens]} tokens[/dim]"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("categorizing", total=len(cleaned_shorts), tokens=0)
 
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
+        for i, short in enumerate(cleaned_shorts):
+            prompt = CATEGORIZER_PROMPT.format(
+                title=short.get("title", ""),
+                channel=short.get("channel", ""),
+                hashtags=short.get("hashtags", []),
+                audio_track=short.get("audio_track", ""),
+                description_clean=short.get("description_clean", ""),
             )
-            raw_text = response.content[0].text
-            private["llm_token_usage"] += response.usage.input_tokens + response.usage.output_tokens
 
-            cat_data = _parse_category_response(raw_text)
-            category = cat_data.get("category", "uncategorized")
-            subcategory = cat_data.get("subcategory", None)
-            confidence = float(cat_data.get("confidence", 0.0))
-            reasoning = cat_data.get("reasoning", "")
+            try:
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=256,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw_text = response.content[0].text
+                private["llm_token_usage"] += response.usage.input_tokens + response.usage.output_tokens
 
-        except Exception as exc:
-            print(f"[categorizer] Failed on short {i} ({short.get('title', '')[:30]}): {exc}")
-            private["failed_shorts"].append(short)
-            category = "uncategorized"
-            subcategory = None
-            confidence = 0.0
-            reasoning = ""
+                cat_data = _parse_category_response(raw_text)
+                category = cat_data.get("category", "uncategorized")
+                subcategory = cat_data.get("subcategory", None)
+                confidence = float(cat_data.get("confidence", 0.0))
+                reasoning = cat_data.get("reasoning", "")
 
-        categorized_short = {
-            **short,
-            "category": category,
-            "subcategory": subcategory,
-            "confidence": confidence,
-            "reasoning": reasoning,
-        }
-        categorized_shorts.append(categorized_short)
+            except Exception as exc:
+                progress.console.log(
+                    f"[red]Failed short {i}[/red] ({short.get('title', '')[:30]}): {exc}"
+                )
+                private["failed_shorts"].append(short)
+                category = "uncategorized"
+                subcategory = None
+                confidence = 0.0
+                reasoning = ""
 
-        if (i + 1) % 10 == 0:
-            print(
-                f"[categorizer] {i + 1}/{len(cleaned_shorts)} | "
-                f"tokens so far: {private['llm_token_usage']}"
-            )
+            categorized_shorts.append({
+                **short,
+                "category": category,
+                "subcategory": subcategory,
+                "confidence": confidence,
+                "reasoning": reasoning,
+            })
+
+            progress.update(task, advance=1, tokens=private["llm_token_usage"])
 
     # Save output
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = CATEGORIZED_DIR / f"categorized_{timestamp}.json"
     out_path.write_text(json.dumps(categorized_shorts, indent=2))
-    print(f"[categorizer] Saved to {out_path}")
-    print(
-        f"[categorizer] Done. {len(categorized_shorts)} categorized, "
-        f"{len(private['failed_shorts'])} failed."
+
+    failed = len(private["failed_shorts"])
+    console.print(
+        f"[green]✓[/green] Categorized [bold]{len(categorized_shorts)}[/bold] Shorts"
+        + (f" ([red]{failed} failed[/red])" if failed else "")
+        + f" — [dim]{private['llm_token_usage']:,} tokens used[/dim]"
     )
 
     return {**state, "categorized_shorts": categorized_shorts, "current_agent": "categorizer"}
