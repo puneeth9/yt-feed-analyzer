@@ -43,7 +43,7 @@ def _scrape_current_short(page) -> dict:
         title = safe_text("yt-shorts-video-title-view-model")
 
     # Channel name
-    channel = safe_text("yt-shorts-channel-name-view-model .yt-core-attributed-string")
+    channel = safe_text('ytd-reel-player-overlay-renderer a[href^="/@"]')
     if not channel:
         channel = safe_text(".shortsChannelName")
     if not channel:
