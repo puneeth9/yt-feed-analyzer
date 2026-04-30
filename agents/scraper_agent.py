@@ -108,6 +108,12 @@ def run_scraper_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     console.rule("[bold blue]Stage 2 of 4 — Scraping")
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    existing_checkpoints = list(CHECKPOINT_DIR.glob("checkpoint_*.json"))
+    if existing_checkpoints:
+        for cp in existing_checkpoints:
+            cp.unlink()
+        console.print(f"[dim]Deleted {len(existing_checkpoints)} checkpoint file(s) from previous run.[/dim]")
+
     target_count = state.get("target_count", 100)
     raw_shorts = list(state.get("raw_shorts", []))
     checkpoint = state.get("checkpoint", 0)
