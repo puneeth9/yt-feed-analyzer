@@ -24,8 +24,17 @@ def run_session_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
     console.rule("[bold blue]Stage 1 of 4 — Session")
 
     if SESSION_PATH.exists():
-        console.print("[green]✓[/green] Existing session found — reusing.")
-        return {**state, "session_ready": True, "current_agent": "session"}
+        console.print("[green]✓[/green] Existing session found.")
+        choice = console.input("[bold]Use existing session?[/bold] [[green]Y[/green]/[red]n[/red]] ").strip().lower()
+        if choice in ("n", "no"):
+            SESSION_PATH.unlink()
+            import shutil
+            if USER_DATA_DIR.exists():
+                shutil.rmtree(USER_DATA_DIR)
+            console.print("[yellow]Session cleared.[/yellow] Launching Chrome for new login...")
+        else:
+            console.print("[dim]Reusing existing session.[/dim]")
+            return {**state, "session_ready": True, "current_agent": "session"}
 
     console.print("[yellow]No session found.[/yellow] Launching Chrome for manual login...")
 

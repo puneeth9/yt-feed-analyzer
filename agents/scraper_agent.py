@@ -156,12 +156,14 @@ def run_scraper_agent(state: FeedAnalyzerState) -> FeedAnalyzerState:
 
                     try:
                         short_data = _scrape_current_short(page)
+                        short_data["url"] = page.url
                     except Exception as exc:
                         progress.console.log(f"[red]DOM scrape error at position {position}:[/red] {exc}")
                         short_data = {
                             "title": "", "channel": "", "hashtags": [],
                             "audio_track": "", "view_count": "",
                             "is_suggested": False, "description_raw": "",
+                            "url": page.url,
                         }
 
                     short_data["position"] = position
